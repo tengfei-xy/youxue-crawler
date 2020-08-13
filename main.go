@@ -2,27 +2,65 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"net/url"
+	"strings"
+
+	"github.com/PuerkitoBio/goquery"
 )
 
 func main() {
 	var grades = [6]string{"一年级", "二年级", "三年级", "四年级", "五年级", "六年级"}
-	var subject = [3]string{"语文", "数学", "英语"}
-	const youkeHome string = `https://video.ijiwen.com`
+	var subjects = [3]string{"语文", "数学", "英语"}
+	const youxueHome string = `https://video.ijiwen.com/`
 	client := &http.Client{}
-
+	var seq int = 1
+	fmt.Print("序号,年级,科目,课程名,集名,视频下载链接\n")
 	for _, grade := range grades {
-		for _, subject := range subject {
-			course := fmt.Sprintf("/index.php?grade_name=%s&subject=%s", grade, subject)
-			getBodyData(client, youkeHome+course, course, true)
-			return
+		for _, subject := range subjects {
+
+			// 具体科目的各种视频的链接
+			courseListLink := fmt.Sprintf("index.php?grade_name=%s&subject=%s", grade, subject)
+			kindVideoDoc := getBodyData(client, youxueHome+courseListLink, courseListLink, true)
+			kindVideoDiv := kindVideoDoc.Find("body").Find("div.course__list-item")
+			for i := 0; i < kindVideoDiv.Length(); i++ {
+				attr, err := kindVideoDiv.Eq(i).Attr("onclick")
+				if !err {
+					panic("视频连接不存在")
+				}
+
+				// 具有完整的一套课程播放地址
+				lastCourseVideoLink := strings.Split(attr, `'`)[1]
+				doc := getBodyData(client, youxueHome+lastCourseVideoLink, lastCourseVideoLink, false)
+
+				// 课程名
+				title := doc.Find("body").Find("div.title").Text()
+
+				// 抓取视频链接和课集名
+				beat := doc.Find("body").Find("div.details__cnt>ul>li")
+				for j := 0; j < beat.Length(); j++ {
+
+					col := beat.Eq(j).Find("div").Text()
+
+					attr, err := beat.Eq(j).Attr("onclick")
+					if !err {
+						panic("不可能不存在视频链接")
+					}
+					//javascript:play('7', '387', '7612e23c2b024c66661e.mp4', '7')
+					//https://oss.dkclass365.com/video/7/381_e15f16f72d62be50bfe7.mp4
+					part := strings.Split(attr, `'`)
+					mp4path := fmt.Sprintf("https://oss.dkclass365.com/video/%s/%s_%s", part[1], part[3], part[5])
+					fmt.Printf("%d,%s,%s,%s,%s,%s\n", seq, grade, subject, title, col, mp4path)
+					seq++
+
+				}
+			}
+
 		}
 	}
 }
-func getBodyData(client *http.Client, link, path string, homeLink bool) []byte {
-	fmt.Println("请求路径:", link)
+func getBodyData(client *http.Client, link, path string, homeLink bool) *goquery.Document {
+	//fmt.Println("请求连接：", link)
 	r, err := http.NewRequest("GET", link, nil)
 	if err != nil {
 		panic(err)
@@ -31,9 +69,7 @@ func getBodyData(client *http.Client, link, path string, homeLink bool) []byte {
 	r.Header.Add("method", "GET")
 	r.Header.Add("path", url.QueryEscape(path))
 	r.Header.Add("scheme", "https")
-
 	r.Header.Add("accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9")
-	r.Header.Add("accept-encoding", "gzip, deflate, br")
 	r.Header.Add("accept-language", "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7")
 	if homeLink {
 		r.Header.Add("cache-contro", "max-age=0")
@@ -52,8 +88,11 @@ func getBodyData(client *http.Client, link, path string, homeLink bool) []byte {
 		panic(err)
 	}
 	defer res.Body.Close()
-	bodyRes, err := ioutil.ReadAll(res.Body)
 
-	fmt.Println(string(bodyRes))
-	return bodyRes
+	doc, err := goquery.NewDocumentFromReader(res.Body)
+
+	if err != nil {
+		panic(err)
+	}
+	return doc
 }
